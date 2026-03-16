@@ -9,7 +9,6 @@ import type { WeaveRenderItem, WeaveRequest, WeaveSseEvent } from "@/types/weave
 type CanvasRendererProps = {
   request: WeaveRequest | null;
   onStatusChange?: (status: string) => void;
-  onNarration?: (text: string) => void;
 };
 
 function TypingNarration({ text }: { text: string }): JSX.Element {
@@ -34,21 +33,51 @@ function TypingNarration({ text }: { text: string }): JSX.Element {
   return <p className="text-base leading-relaxed text-slate-100 md:text-lg">{visibleText}</p>;
 }
 
-export function CanvasRenderer({
-  request,
-  onStatusChange,
-  onNarration,
-}: CanvasRendererProps): JSX.Element {
+export function CanvasRenderer({ request, onStatusChange }: CanvasRendererProps): JSX.Element {
   const [items, setItems] = useState<WeaveRenderItem[]>([]);
   const activeRequestIdRef = useRef<string | null>(null);
+  const speechQueueRef = useRef<string[]>([]);
+  const speakingRef = useRef(false);
 
   useEffect(() => {
+    const synth = window.speechSynthesis;
+
+    const speakNext = (): void => {
+      if (speakingRef.current || speechQueueRef.current.length === 0) {
+        return;
+      }
+
+      const nextLine = speechQueueRef.current.shift();
+
+      if (!nextLine) {
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(nextLine);
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.onend = () => {
+        speakingRef.current = false;
+        speakNext();
+      };
+      utterance.onerror = () => {
+        speakingRef.current = false;
+        speakNext();
+      };
+
+      speakingRef.current = true;
+      synth.speak(utterance);
+    };
+
     if (!request) {
       return;
     }
 
     activeRequestIdRef.current = request.id;
     setItems([]);
+    speechQueueRef.current = [];
+    synth.cancel();
+    speakingRef.current = false;
 
     const controller = new AbortController();
 
@@ -120,7 +149,8 @@ export function CanvasRenderer({
               kind: "narration",
               text: event.text,
             });
-            onNarration?.(event.text);
+            speechQueueRef.current.push(event.text);
+            speakNext();
             onStatusChange?.("Narration arriving...");
           }
 
@@ -139,6 +169,10 @@ export function CanvasRenderer({
               prompt: event.prompt,
               url: event.url,
             });
+            synth.pause();
+            setTimeout(() => {
+              synth.resume();
+            }, 450);
             onStatusChange?.("Visual frame rendered...");
           }
 
@@ -162,8 +196,11 @@ export function CanvasRenderer({
 
     return () => {
       controller.abort();
+      synth.cancel();
+      speechQueueRef.current = [];
+      speakingRef.current = false;
     };
-  }, [onNarration, onStatusChange, request]);
+  }, [onStatusChange, request]);
 
   return (
     <section className="relative z-10 mt-8 w-full max-w-4xl rounded-3xl border border-white/10 bg-canvas-soft/70 p-6 shadow-aura backdrop-blur-md md:p-10">
