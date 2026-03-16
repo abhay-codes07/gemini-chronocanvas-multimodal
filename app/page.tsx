@@ -1,101 +1,213 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { Mic } from "lucide-react";
+import { useRef, useState } from "react";
+
+type StreamEvent = {
+  type: string;
+  text?: string;
+  message?: string;
+  url?: string;
+};
+
+async function streamWeave(
+  transcript: string,
+  onEvent: (event: StreamEvent) => void,
+): Promise<void> {
+  const response = await fetch("/api/weave", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ transcript }),
+  });
+
+  if (!response.ok || !response.body) {
+    onEvent({
+      type: "error",
+      message: "The timeline is unstable. Let us try again.",
+    });
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    pending += decoder.decode(value, { stream: true });
+    const parts = pending.split("\n\n");
+    pending = parts.pop() ?? "";
+
+    for (const block of parts) {
+      const line = block
+        .split("\n")
+        .find((entry) => entry.trimStart().startsWith("data:"));
+
+      if (!line) {
+        continue;
+      }
+
+      const payload = line.replace(/^data:\s?/, "");
+
+      try {
+        onEvent(JSON.parse(payload) as StreamEvent);
+      } catch {
+        // Ignore malformed chunks.
+      }
+    }
+  }
+}
+
+export default function Home(): JSX.Element {
+  const [isListening, setIsListening] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [previewTranscript, setPreviewTranscript] = useState("");
+  const [status, setStatus] = useState("Hold to speak and describe your world.");
+
+  const transcriptRef = useRef("");
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const shouldSubmitOnEndRef = useRef(false);
+
+  const submitTranscript = async (): Promise<void> => {
+    const transcript = transcriptRef.current.trim();
+
+    if (!transcript) {
+      setStatus("We did not catch that. Hold to speak again.");
+      return;
+    }
+
+    setIsStreaming(true);
+    setStatus("Weaving your timeline...");
+
+    await streamWeave(transcript, (event) => {
+      if (event.type === "error") {
+        setStatus(event.message ?? "The timeline is unstable. Let us try again.");
+        return;
+      }
+
+      if (event.type === "done") {
+        setStatus("Timeline stitched. Hold to continue the story.");
+        return;
+      }
+
+      if (event.type === "narration") {
+        setStatus("Narration arriving...");
+      }
+
+      if (event.type === "visual") {
+        setStatus("Visual frame rendered...");
+      }
+    });
+
+    setIsStreaming(false);
+  };
+
+  const handlePressStart = (): void => {
+    const SpeechRecognitionCtor =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognitionCtor) {
+      setStatus("Speech recognition is not supported in this browser.");
+      return;
+    }
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = "en-US";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    transcriptRef.current = "";
+    setPreviewTranscript("");
+    setStatus("Listening...");
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let current = "";
+
+      for (let i = 0; i < event.results.length; i += 1) {
+        current += `${event.results[i][0].transcript} `;
+      }
+
+      transcriptRef.current = current.trim();
+      setPreviewTranscript(current.trim());
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+
+      if (shouldSubmitOnEndRef.current) {
+        shouldSubmitOnEndRef.current = false;
+        void submitTranscript();
+      }
+    };
+
+    recognition.onerror = () => {
+      setStatus("Microphone error. Please try again.");
+      setIsListening(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsListening(true);
+  };
+
+  const handlePressEnd = (): void => {
+    if (!recognitionRef.current || !isListening) {
+      return;
+    }
+
+    shouldSubmitOnEndRef.current = true;
+    recognitionRef.current.stop();
+    setStatus("Transcribing and sending...");
+  };
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+    <main className="relative flex min-h-screen flex-col items-center justify-between overflow-hidden bg-cinematic-radial px-6 py-10 text-foreground">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(61,217,255,0.2),transparent_45%)]" />
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+      <section className="relative z-10 mt-8 w-full max-w-4xl rounded-3xl border border-white/10 bg-canvas-soft/70 p-6 shadow-aura backdrop-blur-md md:p-10">
+        <p className="text-xs uppercase tracking-[0.24em] text-glow-cyan/80">ChronoCanvas</p>
+        <h1 className="mt-4 text-3xl font-semibold text-white md:text-5xl">
+          Speak worlds into existence.
+        </h1>
+        <p className="mt-4 text-sm text-slate-200 md:text-base">
+          No chat boxes. Press and hold the mic, describe a place or scene, and release to stream a cinematic response.
+        </p>
+        <p className="mt-6 min-h-10 rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-slate-100">
+          {previewTranscript || status}
+        </p>
+      </section>
+
+      <div className="relative z-10 mb-4 flex flex-col items-center gap-3">
+        <button
+          type="button"
+          onPointerDown={handlePressStart}
+          onPointerUp={handlePressEnd}
+          onPointerCancel={handlePressEnd}
+          onPointerLeave={isListening ? handlePressEnd : undefined}
+          disabled={isStreaming}
+          className="group relative inline-flex h-24 w-24 items-center justify-center rounded-full border border-glow-cyan/45 bg-canvas-muted shadow-aura transition disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label="Hold to Speak"
         >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+          <span
+            className={`absolute inset-0 rounded-full ${
+              isListening
+                ? "animate-ping bg-glow-cyan/20"
+                : "bg-glow-cyan/10 transition group-hover:scale-105"
+            }`}
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+          <Mic className="relative h-9 w-9 text-glow-cyan" />
+        </button>
+        <p className="text-xs uppercase tracking-[0.18em] text-slate-300">
+          {isListening ? "Release to weave" : "Hold to speak"}
+        </p>
+      </div>
+    </main>
   );
 }
