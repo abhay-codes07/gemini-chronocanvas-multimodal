@@ -3,79 +3,20 @@
 import { Mic } from "lucide-react";
 import { useRef, useState } from "react";
 
-type StreamEvent = {
-  type: string;
-  text?: string;
-  message?: string;
-  url?: string;
-};
-
-async function streamWeave(
-  transcript: string,
-  onEvent: (event: StreamEvent) => void,
-): Promise<void> {
-  const response = await fetch("/api/weave", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ transcript }),
-  });
-
-  if (!response.ok || !response.body) {
-    onEvent({
-      type: "error",
-      message: "The timeline is unstable. Let us try again.",
-    });
-    return;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let pending = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-
-    if (done) {
-      break;
-    }
-
-    pending += decoder.decode(value, { stream: true });
-    const parts = pending.split("\n\n");
-    pending = parts.pop() ?? "";
-
-    for (const block of parts) {
-      const line = block
-        .split("\n")
-        .find((entry) => entry.trimStart().startsWith("data:"));
-
-      if (!line) {
-        continue;
-      }
-
-      const payload = line.replace(/^data:\s?/, "");
-
-      try {
-        onEvent(JSON.parse(payload) as StreamEvent);
-      } catch {
-        // Ignore malformed chunks.
-      }
-    }
-  }
-}
+import { CanvasRenderer } from "@/components/CanvasRenderer";
+import type { WeaveRequest } from "@/types/weave";
 
 export default function Home(): JSX.Element {
   const [isListening, setIsListening] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [previewTranscript, setPreviewTranscript] = useState("");
   const [status, setStatus] = useState("Hold to speak and describe your world.");
+  const [request, setRequest] = useState<WeaveRequest | null>(null);
 
   const transcriptRef = useRef("");
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const shouldSubmitOnEndRef = useRef(false);
 
-  const submitTranscript = async (): Promise<void> => {
+  const submitTranscript = (): void => {
     const transcript = transcriptRef.current.trim();
 
     if (!transcript) {
@@ -84,29 +25,7 @@ export default function Home(): JSX.Element {
     }
 
     setIsStreaming(true);
-    setStatus("Weaving your timeline...");
-
-    await streamWeave(transcript, (event) => {
-      if (event.type === "error") {
-        setStatus(event.message ?? "The timeline is unstable. Let us try again.");
-        return;
-      }
-
-      if (event.type === "done") {
-        setStatus("Timeline stitched. Hold to continue the story.");
-        return;
-      }
-
-      if (event.type === "narration") {
-        setStatus("Narration arriving...");
-      }
-
-      if (event.type === "visual") {
-        setStatus("Visual frame rendered...");
-      }
-    });
-
-    setIsStreaming(false);
+    setRequest({ id: crypto.randomUUID(), transcript });
   };
 
   const handlePressStart = (): void => {
@@ -124,7 +43,6 @@ export default function Home(): JSX.Element {
     recognition.interimResults = true;
 
     transcriptRef.current = "";
-    setPreviewTranscript("");
     setStatus("Listening...");
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
@@ -135,7 +53,7 @@ export default function Home(): JSX.Element {
       }
 
       transcriptRef.current = current.trim();
-      setPreviewTranscript(current.trim());
+      setStatus(current.trim() || "Listening...");
     };
 
     recognition.onend = () => {
@@ -143,7 +61,7 @@ export default function Home(): JSX.Element {
 
       if (shouldSubmitOnEndRef.current) {
         shouldSubmitOnEndRef.current = false;
-        void submitTranscript();
+        submitTranscript();
       }
     };
 
@@ -171,18 +89,15 @@ export default function Home(): JSX.Element {
     <main className="relative flex min-h-screen flex-col items-center justify-between overflow-hidden bg-cinematic-radial px-6 py-10 text-foreground">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(61,217,255,0.2),transparent_45%)]" />
 
-      <section className="relative z-10 mt-8 w-full max-w-4xl rounded-3xl border border-white/10 bg-canvas-soft/70 p-6 shadow-aura backdrop-blur-md md:p-10">
-        <p className="text-xs uppercase tracking-[0.24em] text-glow-cyan/80">ChronoCanvas</p>
-        <h1 className="mt-4 text-3xl font-semibold text-white md:text-5xl">
-          Speak worlds into existence.
-        </h1>
-        <p className="mt-4 text-sm text-slate-200 md:text-base">
-          No chat boxes. Press and hold the mic, describe a place or scene, and release to stream a cinematic response.
-        </p>
-        <p className="mt-6 min-h-10 rounded-xl border border-white/10 bg-black/25 px-4 py-3 text-sm text-slate-100">
-          {previewTranscript || status}
-        </p>
-      </section>
+      <CanvasRenderer
+        request={request}
+        onStatusChange={(nextStatus) => {
+          setStatus(nextStatus);
+          if (nextStatus.includes("Timeline stitched") || nextStatus.includes("unstable")) {
+            setIsStreaming(false);
+          }
+        }}
+      />
 
       <div className="relative z-10 mb-4 flex flex-col items-center gap-3">
         <button
@@ -204,9 +119,7 @@ export default function Home(): JSX.Element {
           />
           <Mic className="relative h-9 w-9 text-glow-cyan" />
         </button>
-        <p className="text-xs uppercase tracking-[0.18em] text-slate-300">
-          {isListening ? "Release to weave" : "Hold to speak"}
-        </p>
+        <p className="text-center text-xs uppercase tracking-[0.18em] text-slate-300">{status}</p>
       </div>
     </main>
   );

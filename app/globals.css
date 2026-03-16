@@ -14,6 +14,19 @@ body {
   min-height: 100vh;
 }
 
+@keyframes imageFocus {
+  0% {
+    opacity: 0;
+    filter: blur(20px);
+    transform: scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: scale(1);
+  }
+}
+
 @layer utilities {
   .text-balance {
     text-wrap: balance;
@@ -27,5 +40,9 @@ body {
     );
     border: 1px solid rgba(255, 255, 255, 0.1);
     backdrop-filter: blur(8px);
+  }
+
+  .image-focus {
+    animation: imageFocus 800ms ease-out both;
   }
 }
