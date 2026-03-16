@@ -9,6 +9,7 @@ import type { WeaveRenderItem, WeaveRequest, WeaveSseEvent } from "@/types/weave
 type CanvasRendererProps = {
   request: WeaveRequest | null;
   onStatusChange?: (status: string) => void;
+  onStreamStateChange?: (state: "idle" | "waiting" | "active" | "done" | "error") => void;
 };
 
 function TypingNarration({ text }: { text: string }): JSX.Element {
@@ -33,7 +34,11 @@ function TypingNarration({ text }: { text: string }): JSX.Element {
   return <p className="text-base leading-relaxed text-slate-100 md:text-lg">{visibleText}</p>;
 }
 
-export function CanvasRenderer({ request, onStatusChange }: CanvasRendererProps): JSX.Element {
+export function CanvasRenderer({
+  request,
+  onStatusChange,
+  onStreamStateChange,
+}: CanvasRendererProps): JSX.Element {
   const [items, setItems] = useState<WeaveRenderItem[]>([]);
   const activeRequestIdRef = useRef<string | null>(null);
   const speechQueueRef = useRef<string[]>([]);
@@ -70,6 +75,7 @@ export function CanvasRenderer({ request, onStatusChange }: CanvasRendererProps)
     };
 
     if (!request) {
+      onStreamStateChange?.("idle");
       return;
     }
 
@@ -80,6 +86,7 @@ export function CanvasRenderer({ request, onStatusChange }: CanvasRendererProps)
     speakingRef.current = false;
 
     const controller = new AbortController();
+    let seenFirstChunk = false;
 
     const appendItem = (item: WeaveRenderItem) => {
       startTransition(() => {
@@ -89,6 +96,7 @@ export function CanvasRenderer({ request, onStatusChange }: CanvasRendererProps)
 
     const consumeStream = async (): Promise<void> => {
       onStatusChange?.("Weaving your timeline...");
+      onStreamStateChange?.("waiting");
 
       const response = await fetch("/api/weave", {
         method: "POST",
@@ -106,6 +114,7 @@ export function CanvasRenderer({ request, onStatusChange }: CanvasRendererProps)
           message: "The timeline is unstable. Let us try again.",
         });
         onStatusChange?.("The timeline is unstable. Let us try again.");
+        onStreamStateChange?.("error");
         return;
       }
 
@@ -131,6 +140,11 @@ export function CanvasRenderer({ request, onStatusChange }: CanvasRendererProps)
 
           if (!line) {
             continue;
+          }
+
+          if (!seenFirstChunk) {
+            seenFirstChunk = true;
+            onStreamStateChange?.("active");
           }
 
           const payload = line.replace(/^data:\s?/, "");
@@ -183,10 +197,12 @@ export function CanvasRenderer({ request, onStatusChange }: CanvasRendererProps)
               message: event.message,
             });
             onStatusChange?.(event.message);
+            onStreamStateChange?.("error");
           }
 
           if (event.type === "done") {
             onStatusChange?.("Timeline stitched. Hold to continue the story.");
+            onStreamStateChange?.("done");
           }
         }
       }
@@ -200,17 +216,17 @@ export function CanvasRenderer({ request, onStatusChange }: CanvasRendererProps)
       speechQueueRef.current = [];
       speakingRef.current = false;
     };
-  }, [onStatusChange, request]);
+  }, [onStatusChange, onStreamStateChange, request]);
 
   return (
-    <section className="relative z-10 mt-8 w-full max-w-4xl rounded-3xl border border-white/10 bg-canvas-soft/70 p-6 shadow-aura backdrop-blur-md md:p-10">
+    <section className="relative z-10 mt-4 w-full max-w-4xl rounded-3xl border border-white/10 bg-canvas-soft/70 p-4 shadow-aura backdrop-blur-md sm:mt-8 sm:p-6 md:p-10">
       <p className="text-xs uppercase tracking-[0.24em] text-glow-cyan/80">ChronoCanvas</p>
-      <h1 className="mt-4 text-3xl font-semibold text-white md:text-5xl">Speak worlds into existence.</h1>
-      <p className="mt-4 text-sm text-slate-200 md:text-base">
+      <h1 className="mt-3 text-2xl font-semibold text-white sm:mt-4 sm:text-3xl md:text-5xl">Speak worlds into existence.</h1>
+      <p className="mt-3 text-sm text-slate-200 md:mt-4 md:text-base">
         No chat boxes. Press and hold the mic, describe a place or scene, and release to stream a cinematic response.
       </p>
 
-      <div className="mt-8 space-y-5">
+      <div className="mt-6 space-y-4 sm:mt-8 sm:space-y-5">
         <AnimatePresence mode="popLayout">
           {items.map((item) => (
             <motion.article

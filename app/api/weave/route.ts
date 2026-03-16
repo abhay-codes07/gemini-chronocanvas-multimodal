@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import { buildWeavePrompt, geminiModel, type WeaveChunk } from "@/lib/gemini";
 import { uploadAsset } from "@/lib/gcp-storage";
+import { buildWeavePrompt, geminiModel, type WeaveChunk } from "@/lib/gemini";
 
 export const runtime = "nodejs";
 
@@ -9,6 +9,8 @@ type WeaveRequestBody = {
   transcript?: string;
   contextSummary?: string;
 };
+
+const FALLBACK_ERROR_MESSAGE = "The timeline is unstable. Let us try again.";
 
 function serializeSse(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
@@ -170,15 +172,10 @@ export async function POST(request: Request): Promise<Response> {
         }
 
         send({ type: "done" });
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "The timeline is unstable. Let us try again.";
-
+      } catch {
         send({
           type: "error",
-          message: message || "The timeline is unstable. Let us try again.",
+          message: FALLBACK_ERROR_MESSAGE,
         });
       } finally {
         controller.close();
