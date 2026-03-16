@@ -5,27 +5,39 @@ const clientEmail = process.env.GCP_CLIENT_EMAIL;
 const privateKey = process.env.GCP_PRIVATE_KEY?.replace(/\\n/g, "\n");
 const bucketName = process.env.GCP_STORAGE_BUCKET;
 
-if (!projectId) {
-  throw new Error("Missing GCP_PROJECT_ID environment variable.");
+let storageInstance: Storage | null = null;
+
+function assertStorageEnv(): asserts projectId is string {
+  if (!projectId) {
+    throw new Error("Missing GCP_PROJECT_ID environment variable.");
+  }
+
+  if (!clientEmail || !privateKey) {
+    throw new Error(
+      "Missing GCP_CLIENT_EMAIL or GCP_PRIVATE_KEY environment variables.",
+    );
+  }
+
+  if (!bucketName) {
+    throw new Error("Missing GCP_STORAGE_BUCKET environment variable.");
+  }
 }
 
-if (!clientEmail || !privateKey) {
-  throw new Error(
-    "Missing GCP_CLIENT_EMAIL or GCP_PRIVATE_KEY environment variables.",
-  );
-}
+function getStorage(): Storage {
+  assertStorageEnv();
 
-if (!bucketName) {
-  throw new Error("Missing GCP_STORAGE_BUCKET environment variable.");
-}
+  if (!storageInstance) {
+    storageInstance = new Storage({
+      projectId,
+      credentials: {
+        client_email: clientEmail,
+        private_key: privateKey,
+      },
+    });
+  }
 
-const storage = new Storage({
-  projectId,
-  credentials: {
-    client_email: clientEmail,
-    private_key: privateKey,
-  },
-});
+  return storageInstance;
+}
 
 export type UploadAssetInput = {
   buffer: Buffer;
@@ -38,7 +50,7 @@ export async function uploadAsset({
   contentType,
   destination,
 }: UploadAssetInput): Promise<string> {
-  const bucket = storage.bucket(bucketName);
+  const bucket = getStorage().bucket(bucketName as string);
   const file = bucket.file(destination);
 
   await file.save(buffer, {
@@ -54,6 +66,10 @@ export async function uploadAsset({
 }
 
 export function getAssetUrl(objectPath: string): string {
+  if (!bucketName) {
+    throw new Error("Missing GCP_STORAGE_BUCKET environment variable.");
+  }
+
   const encodedPath = objectPath
     .split("/")
     .map((segment) => encodeURIComponent(segment))
